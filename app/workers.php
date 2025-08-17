@@ -10,6 +10,9 @@ use Swow\Channel;
 use Swow\Http\Parser;
 use Swow\Buffer;
 
+const DEFAULT_SERVICE_NAME = 'default';
+const FALLBACK_SERVICE_NAME = 'fallback';
+
 function parseQueryString(string $query): array
 {
     $params = [];
@@ -120,39 +123,52 @@ Coroutine::run(static function () {
             }
 
             if ($paymentsSummaryTasksChannel->getLength() > 0) {
+                usleep(1000);
                 $query = $paymentsSummaryTasksChannel->pop();
 
                 // Coloquei isso aqui para evitar inconsistência. Vale a pena pensar num jeito melhor de fazer
                 $counter = 0;
-                while ($successfullyInsertedPayments->getLength() > 0 && $counter <= 1000) {
+                while ($successfullyInsertedPayments->getLength() > 0 && $counter <= 2000) {
                     $item = $successfullyInsertedPayments->pop();
                     $successArray[] = $item;
                     $counter++;
                 }
 
-                $sum = '0.0';
-                $count = 0;
+                $defaultSum = '0.0';
+                $defaultCount = 0;
+                $fallbackSum = '0.0';
+                $fallbackCount = 0;
 
                 if (!isset($query['from'])) {
                     foreach ($successArray as $item) {
-                        $sum = bcadd($sum, $item['amount'], 10);
-                        $count++;
+                        if ($item['service'] == DEFAULT_SERVICE_NAME) {
+                            $defaultSum = bcadd($defaultSum, $item['amount'], 10);
+                            $defaultCount++;
+                            continue;
+                        }
+
+                        $fallbackSum = bcadd($fallbackSum, $item['amount'], 10);
+                        $fallbackCount++;
                     }
                 } else {
                     foreach ($successArray as $item) {
                         if ($item['timestamp'] >= $query['from'] && $item['timestamp'] <= $query['to']) {
-                            $sum = bcadd($sum, $item['amount'], 10);
-                            $count++;
+                            if ($item['service'] == DEFAULT_SERVICE_NAME) {
+                                $defaultSum = bcadd($defaultSum, $item['amount'], 10);
+                                $defaultCount++;
+                                continue;
+                            }
+
+                            $fallbackSum = bcadd($fallbackSum, $item['amount'], 10);
+                            $fallbackCount++;
                         }
                     }
                 }
 
-                $result = '{"default": {"totalRequests": ' . $count . ', "totalAmount": ' . $sum . '}, "fallback": {"totalRequests": 0, "totalAmount": 0.0}}';
+                $result = '{"default": {"totalRequests": ' . $defaultCount . ', "totalAmount": ' . $defaultSum . '}, "fallback": {"totalRequests": ' . $fallbackCount . ', "totalAmount": ' . $fallbackSum . '}}';
 
                 $query['server']->sendTo($result, 0, strlen($result), $query['peer']);
             }
-
-            usleep(1);
         }
     });
 
@@ -213,12 +229,19 @@ Coroutine::run(static function () {
     // WORKERS PAYMENTS
     foreach (range(1, WORKERS_NUM) as $workerNum) {
         Coroutine::run(static function () use ($paymentsCacheChannel, $errorChannel, $successfullyInsertedPayments) {
-            $client = new Socket(Socket::TYPE_TCP);
-            $client->connect(PAYMENT_PROCESSOR_URL_DEFAULT, PAYMENT_PROCESSOR_PORT_DEFAULT);
+            $defaultClient = new Socket(Socket::TYPE_TCP);
+            $defaultClient->connect(PAYMENT_PROCESSOR_URL_DEFAULT, PAYMENT_PROCESSOR_PORT_DEFAULT);
 
-            $parser   = new Parser();
-            $parser->setType(Parser::TYPE_RESPONSE);
-            $buffer   = new Buffer(HTTP_PARSER_BUFFER_SIZE);
+            $defaultParser   = new Parser();
+            $defaultParser->setType(Parser::TYPE_RESPONSE);
+            $defaultBuffer   = new Buffer(HTTP_PARSER_BUFFER_SIZE);
+
+            $fallbackClient = new Socket(Socket::TYPE_TCP);
+            $fallbackClient->connect(PAYMENT_PROCESSOR_URL_FALLBACK, PAYMENT_PROCESSOR_PORT_FALLBACK);
+
+            $fallbackParser   = new Parser();
+            $fallbackParser->setType(Parser::TYPE_RESPONSE);
+            $fallbackBuffer   = new Buffer(HTTP_PARSER_BUFFER_SIZE);
 
             while (true) {
                 try {
@@ -231,8 +254,9 @@ Coroutine::run(static function () {
 
                     [$nowApi, $nowPersist] = isoNowMs();
                     $payloadApi = substr($payload, 1, -1) . ',"requestedAt":"' . $nowApi . '"}';
+                    $amount = extractAmount($payloadApi);
 
-                    $client->send(
+                    $defaultClient->send(
                         request(
                             PAYMENT_PROCESSOR_URL_DEFAULT,
                             '/payments',
@@ -243,23 +267,57 @@ Coroutine::run(static function () {
                     $parsedOffset = 0;
 
                     do {
-                        $client->recv($buffer, $buffer->getLength());
-                        $parsedOffset += $parser->execute($buffer, $parsedOffset);
+                        $defaultClient->recv($defaultBuffer, $defaultBuffer->getLength());
+                        $parsedOffset += $defaultParser->execute($defaultBuffer, $parsedOffset);
 
-                        if ($parser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
-                            $buffer->truncateFrom($parsedOffset);
+                        if ($defaultParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
+                            $defaultBuffer->truncateFrom($parsedOffset);
                             $parsedOffset = 0;
                             continue;
                         }
 
-                        if ($parser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
-                            $buffer->truncateFrom($parsedOffset);
+                        if ($defaultParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
+                            $defaultBuffer->truncateFrom($parsedOffset);
                             break;
                         }
                     } while (true);
 
-                    if ($parser->getStatusCode() == 200) {
-                        $successfullyInsertedPayments->push(['timestamp' => $nowPersist, 'amount' => extractAmount($payloadApi)]);
+                    if ($defaultParser->getStatusCode() == 200) {
+                        $successfullyInsertedPayments->push(['service' => DEFAULT_SERVICE_NAME, 'timestamp' => $nowPersist, 'amount' => $amount]);
+                        continue;
+                    }
+
+                    [$nowApi, $nowPersist] = isoNowMs();
+                    $payloadApi = substr($payload, 1, -1) . ',"requestedAt":"' . $nowApi . '"}';
+
+                    $fallbackClient->send(
+                        request(
+                            PAYMENT_PROCESSOR_URL_FALLBACK,
+                            '/payments',
+                            $payloadApi
+                        )
+                    );
+
+                    $parsedOffset = 0;
+
+                    do {
+                        $fallbackClient->recv($fallbackBuffer, $fallbackBuffer->getLength());
+                        $parsedOffset += $fallbackParser->execute($fallbackBuffer, $parsedOffset);
+
+                        if ($fallbackParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
+                            $fallbackBuffer->truncateFrom($parsedOffset);
+                            $parsedOffset = 0;
+                            continue;
+                        }
+
+                        if ($fallbackParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
+                            $fallbackBuffer->truncateFrom($parsedOffset);
+                            break;
+                        }
+                    } while (true);
+
+                    if ($fallbackParser->getStatusCode() == 200) {
+                        $successfullyInsertedPayments->push(['service' => FALLBACK_SERVICE_NAME, 'timestamp' => $nowPersist, 'amount' => $amount]);
                         continue;
                     }
 

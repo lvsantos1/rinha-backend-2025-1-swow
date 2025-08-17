@@ -65,7 +65,7 @@ function paymentHandler(Channel $channel, Buffer $data, bool $keepAlive): string
 
 function paymentsSummaryHandler(Channel $channel, ?string $queryParams, Socket $ipc, bool $keepAlive): string
 {
-    usleep(200);
+    usleep(1000);
     $channel->push('b' . $queryParams ?? '');
 
     $data = '{}';

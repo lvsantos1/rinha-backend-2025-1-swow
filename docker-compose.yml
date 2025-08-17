@@ -1,0 +1,72 @@
+services:
+
+  haproxy:
+    container_name: lvsantos1-rinha-haproxy
+    build:
+      context: ./haproxy
+      dockerfile: Dockerfile.local
+    ports:
+      - "9999:80"
+    volumes:
+      - ./haproxy/haproxy.cfg:/etc/haproxy/haproxy.cfg
+      - http:/http:rw
+    cpuset: "0,1,2,3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: "30MB"
+
+  api1: &php
+    build:
+      context: ./php
+      dockerfile: Dockerfile.local
+    container_name: lvsantos1-rinha-api1
+    environment:
+      - INTERNAL_ID=1
+    volumes:
+      - ./app:/var/www
+      - ipc:/ipc:rw
+      - http:/http:rw
+    cpuset: "0,1,2,3"
+    working_dir: /var/www
+    entrypoint: ["tail", "-f", "/dev/null"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "60MB"
+
+  api2:
+    container_name: lvsantos1-rinha-api2
+    environment:
+      - INTERNAL_ID=2
+    <<: *php
+
+  api3:
+    container_name: lvsantos1-rinha-api3
+    environment:
+      - INTERNAL_ID=3
+    <<: *php
+
+  workers:
+    container_name: lvsantos1-rinha-workers
+    volumes:
+      - ./app:/var/www
+      - ipc:/ipc
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: "200MB"
+    <<: *php
+
+volumes:
+  ipc:
+  http:
+
+networks:
+  payment-processor:
+    external: true

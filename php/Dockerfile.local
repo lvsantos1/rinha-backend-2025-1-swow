@@ -1,0 +1,112 @@
+FROM alpine:3.22 AS builder
+
+ARG PHP_VERSION=PHP-8.3.24
+ARG SWOW_VERSION=v1.6.0
+
+RUN apk add --no-cache \
+    git autoconf make gcc g++ \
+    libtool bison re2c pkgconfig \
+    openssl-dev zlib-dev curl-dev \
+    linux-headers bash libxml2-dev
+
+WORKDIR /build
+
+ENV CFLAGS="-Ofast -march=alderlake -mtune=alderlake \
+  -fomit-frame-pointer -funroll-loops \
+  -falign-functions=32 -falign-loops=32 \
+  -falign-jumps=32 -fprefetch-loop-arrays \
+  -fstrict-aliasing -ffunction-sections -fdata-sections"
+ENV CXXFLAGS="${CFLAGS}"
+
+RUN git clone --branch ${PHP_VERSION} --depth 1 https://github.com/php/php-src php-src
+
+WORKDIR /build/php-src
+RUN ./buildconf --force && \
+    ./configure \
+        --prefix=/usr/local/php-opt \
+        # XML
+        --disable-libxml \
+        --disable-dom \
+        --disable-simplexml \
+        --disable-xml \
+        --disable-xmlreader \
+        --disable-xmlwriter \
+        # soap, html, xstl
+        --disable-soap \
+        --disable-xsl \
+        --disable-wddx \
+        # dbs
+        --without-pdo-sqlite \
+        --without-sqlite3 \
+        --without-mysqli \
+        --without-pdo-mysql \
+        --without-pdo-pgsql \
+        --without-pgsql \
+        --without-odbc \
+        --without-pdo-odbc \
+        --without-pdo-firebird \
+        # variados (ipc, standalone, etc)
+        --disable-phar \
+        --disable-posix \
+        --disable-shmop \
+        --disable-sysvmsg \
+        --disable-sysvsem \
+        --disable-sysvshm \
+        --disable-ctype \
+        --disable-tokenizer \
+        --disable-filter \
+        --disable-intl \
+        --disable-exif \
+        --disable-gettext \
+        --disable-cgi \
+        # compressão
+        --disable-zip \
+        --without-bz2 \
+        --without-xpm \
+        # debug
+        --disable-debug \
+        --disable-cli-debug \
+        --disable-phpdbg \
+        # mantém o básico
+        --enable-cli \
+        --with-openssl \
+        --with-zlib \
+        --with-curl \
+        --enable-bcmath \
+        --enable-opcache && \
+    make -j$(nproc) && \
+    make install
+
+# corrige o erro do swow: configure: error: not supported. Need a PHP version >= 8.0.0 (found 324)
+ENV PHP_VERSION_ID=80324
+
+WORKDIR /build
+RUN git clone --branch ${SWOW_VERSION} --depth 1 https://github.com/swow/swow.git swow-src
+WORKDIR /build/swow-src/ext
+RUN /usr/local/php-opt/bin/phpize && \
+    ./configure --with-php-config=/usr/local/php-opt/bin/php-config && \
+    make -j$(nproc) && \
+    make install
+
+FROM alpine:3.22
+
+RUN apk add --no-cache libstdc++ openssl zlib curl libxml2
+
+COPY --from=builder /usr/local/php-opt /usr/local/php-opt
+
+COPY ./run.ini /usr/local/php-opt/lib/php.ini
+
+ENV PHP_INI_SCAN_DIR="/usr/local/php-opt/conf.d"
+
+RUN mkdir /usr/local/php-opt/conf.d
+
+RUN echo "extension=swow.so" >> /usr/local/php-opt/conf.d/swow.ini
+
+RUN echo "zend_extension=opcache.so" >> /usr/local/php-opt/conf.d/opcache.ini
+
+ENV PATH="/usr/local/php-opt/bin:$PATH"
+
+RUN mkdir /tmp/.opcache
+
+ENTRYPOINT ["php"]
+CMD ["-a"]

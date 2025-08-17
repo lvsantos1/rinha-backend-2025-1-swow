@@ -82,7 +82,31 @@ function manualExtractionStrpbrk(string $data) {
     return $numPart;
 }
 
+function extractAmountWhile(string $payload): string
+{
+    static $needle = '"amount":';
+    $lenNeedle = strlen($needle);
+    $pos = strpos($payload, $needle);
+    $pos += $lenNeedle;
+    $char = $payload[$pos] ?? '';
+
+    // pular espaço se houver
+    $pos += ($char === ' ' ? 1 : 0);
+
+    $amount = '';
+    $c = $payload[$pos] ?? '';
+
+    while ($c !== '' && $c !== ',') {
+        $amount .= $c;
+        $pos++;
+        $c = $payload[$pos] ?? '';
+    }
+
+    return $amount;
+}
+
 benchmarkFunc(10000, 'manualExtractionStrpbrk', [$dataTest]);
 benchmarkFunc(10000, 'manualExtractionForeach', [$dataTest]);
 benchmarkFunc(10000, 'jsonDecodeExtraction', [$dataTest]);
 benchmarkFunc(10000, 'manualExtractionSubstr', [$dataTest]);
+benchmarkFunc(10000, 'extractAmountWhile', [$dataTest]);

@@ -71,7 +71,7 @@ function paymentsSummaryHandler(Channel $channel, ?string $queryParams, Socket $
     $data = '{}';
 
     try {
-        $recv = $ipc->recvString(512, 5);
+        $recv = $ipc->recvString(512, 100);
         if ($recv !== null) {
             $data = $recv;
         }

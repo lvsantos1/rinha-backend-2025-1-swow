@@ -69,15 +69,12 @@ function paymentsSummaryHandler(Channel $channel, ?string $queryParams, Socket $
 
     $data = '{}';
 
-    while(true) {
-        try {
-            $recv = $ipc->recvString();
-            if ($recv !== null) {
-                $data = $recv;
-                break;
-            }
-        } catch (SocketException $e) {
+    try {
+        $recv = $ipc->recvString(512, 100);
+        if ($recv !== null) {
+            $data = $recv;
         }
+    } catch (SocketException $e) {
     }
 
     return buildResponse($data, $keepAlive, 'application/json');

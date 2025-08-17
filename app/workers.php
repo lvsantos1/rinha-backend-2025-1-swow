@@ -126,33 +126,22 @@ Coroutine::run(static function () {
                 usleep(1000);
                 $query = $paymentsSummaryTasksChannel->pop();
 
-                // Coloquei isso aqui para evitar inconsistência. Vale a pena pensar num jeito melhor de fazer
-                $counter = 0;
-                while ($successfullyInsertedPayments->getLength() > 0 && $counter <= 2000) {
-                    $item = $successfullyInsertedPayments->pop();
-                    $successArray[] = $item;
-                    $counter++;
-                }
-
-                $defaultSum = '0.0';
-                $defaultCount = 0;
-                $fallbackSum = '0.0';
-                $fallbackCount = 0;
-
-                if (!isset($query['from'])) {
-                    foreach ($successArray as $item) {
-                        if ($item['service'] == DEFAULT_SERVICE_NAME) {
-                            $defaultSum = bcadd($defaultSum, $item['amount'], 10);
-                            $defaultCount++;
-                            continue;
-                        }
-
-                        $fallbackSum = bcadd($fallbackSum, $item['amount'], 10);
-                        $fallbackCount++;
+                // Coroutine::run(function () use ($successfullyInsertedPayments, $query) {
+                    // Coloquei isso aqui para evitar inconsistência. Vale a pena pensar num jeito melhor de fazer
+                    $counter = 0;
+                    while ($successfullyInsertedPayments->getLength() > 0 && $counter <= 2000) {
+                        $item = $successfullyInsertedPayments->pop();
+                        $successArray[] = $item;
+                        $counter++;
                     }
-                } else {
-                    foreach ($successArray as $item) {
-                        if ($item['timestamp'] >= $query['from'] && $item['timestamp'] <= $query['to']) {
+
+                    $defaultSum = '0.0';
+                    $defaultCount = 0;
+                    $fallbackSum = '0.0';
+                    $fallbackCount = 0;
+
+                    if (!isset($query['from'])) {
+                        foreach ($successArray as $item) {
                             if ($item['service'] == DEFAULT_SERVICE_NAME) {
                                 $defaultSum = bcadd($defaultSum, $item['amount'], 10);
                                 $defaultCount++;
@@ -162,12 +151,25 @@ Coroutine::run(static function () {
                             $fallbackSum = bcadd($fallbackSum, $item['amount'], 10);
                             $fallbackCount++;
                         }
+                    } else {
+                        foreach ($successArray as $item) {
+                            if ($item['timestamp'] >= $query['from'] && $item['timestamp'] <= $query['to']) {
+                                if ($item['service'] == DEFAULT_SERVICE_NAME) {
+                                    $defaultSum = bcadd($defaultSum, $item['amount'], 10);
+                                    $defaultCount++;
+                                    continue;
+                                }
+
+                                $fallbackSum = bcadd($fallbackSum, $item['amount'], 10);
+                                $fallbackCount++;
+                            }
+                        }
                     }
-                }
 
-                $result = '{"default": {"totalRequests": ' . $defaultCount . ', "totalAmount": ' . $defaultSum . '}, "fallback": {"totalRequests": ' . $fallbackCount . ', "totalAmount": ' . $fallbackSum . '}}';
+                    $result = '{"default": {"totalRequests": ' . $defaultCount . ', "totalAmount": ' . $defaultSum . '}, "fallback": {"totalRequests": ' . $fallbackCount . ', "totalAmount": ' . $fallbackSum . '}}';
 
-                $query['server']->sendTo($result, 0, strlen($result), $query['peer']);
+                    $query['server']->sendTo($result, 0, strlen($result), $query['peer']);
+                // });
             }
         }
     });

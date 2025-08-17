@@ -168,6 +168,7 @@ Coroutine::run(static function () {
 
                 $query['server']->sendTo($result, 0, strlen($result), $query['peer']);
             }
+            usleep(1);
         }
     });
 

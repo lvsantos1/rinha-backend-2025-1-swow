@@ -147,25 +147,8 @@ Coroutine::run(static function () {
             }
 
             if ($paymentsSummaryTasksChannel->getLength() > 0) {
+                usleep(1000);
                 $query = $paymentsSummaryTasksChannel->pop();
-
-                // Coloquei isso aqui para evitar inconsistência. Vale a pena pensar num jeito melhor de fazer
-                // $counter = 0;
-                // while ($successfullyInsertedPayments->getLength() > 0 && $counter <= 1000) {
-                //     $item = $successfullyInsertedPayments->pop();
-                //     $successArray[] = $item;
-                //     $counter++;
-                // }
-
-                // $counter = 0;
-                // while ($counter < 1) {
-                //     try {
-                //         $item = $successfullyInsertedPayments->pop(1);
-                //     } catch (Throwable) {
-                //         $counter++;
-                //     }
-                //     $successArray[] = $item;
-                // }
 
                 $defaultSum = '0.0';
                 $defaultCount = 0;
@@ -218,7 +201,7 @@ Coroutine::run(static function () {
 
             $handlers = [
                 'a' => fn(string $data, array $config) => static function () use ($data, $paymentsCacheChannel) {
-                    $paymentsCacheChannel->push($data);
+                    $paymentsCacheChannel->push(['target' => DEFAULT_SERVICE_NAME, 'payload' => $data]);
                 },
                 'b' => fn(string $data, array $config) => static function () use ($paymentsSummaryTasksChannel, $data, $config, &$server) {
                     $query = [];
@@ -279,44 +262,47 @@ Coroutine::run(static function () {
                 $correlationId = extractCorrelationId($data['payload']);
 
                 // tenta recuperar do default
+                if ($data['lastTarget'] == DEFAULT_SERVICE_NAME) {
 
-                $defaultClient->send(
-                    getRequest(
-                        PAYMENT_PROCESSOR_URL_DEFAULT,
-                        '/payments/' . $correlationId
-                    )
-                );
+                    $defaultClient->send(
+                        getRequest(
+                            PAYMENT_PROCESSOR_URL_DEFAULT,
+                            '/payments/' . $correlationId
+                        )
+                    );
 
-                $parsedOffset = 0;
+                    $parsedOffset = 0;
 
-                do {
-                    $defaultClient->recv($defaultBuffer, $defaultBuffer->getLength());
-                    $parsedOffset += $defaultParser->execute($defaultBuffer, $parsedOffset);
+                    do {
+                        $defaultClient->recv($defaultBuffer, $defaultBuffer->getLength());
+                        $parsedOffset += $defaultParser->execute($defaultBuffer, $parsedOffset);
 
-                    if ($defaultParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
-                        $defaultBuffer->truncateFrom($parsedOffset);
-                        $parsedOffset = 0;
+                        if ($defaultParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
+                            $defaultBuffer->truncateFrom($parsedOffset);
+                            $parsedOffset = 0;
+                            continue;
+                        }
+
+                        if ($defaultParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
+                            $defaultBuffer->truncateFrom($parsedOffset);
+                            break;
+                        }
+                    } while (true);
+
+                    if ($defaultParser->getStatusCode() == 200) {
+                        $successfullyInsertedPayments->push([
+                            'service' => DEFAULT_SERVICE_NAME,
+                            'timestamp' => $data['requestedAt'],
+                            'amount' => extractAmount($data['payloadApi'])
+                        ]);
                         continue;
                     }
 
-                    if ($defaultParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
-                        $defaultBuffer->truncateFrom($parsedOffset);
-                        break;
-                    }
-                } while (true);
-
-                if ($defaultParser->getStatusCode() == 200) {
-                    $successfullyInsertedPayments->push([
-                        'service' => DEFAULT_SERVICE_NAME,
-                        'timestamp' => $data['requestedAt'],
-                        'amount' => extractAmount($data['payloadApi'])
-                    ]);
+                    $paymentsCacheChannel->push(['payload' => $data['payload'], 'target' => FALLBACK_SERVICE_NAME]);
                     continue;
                 }
 
                 // tenta recuperar do fallback
-
-                $parsedOffset = 0;
 
                 $fallbackClient->send(
                     getRequest(
@@ -324,6 +310,8 @@ Coroutine::run(static function () {
                         '/payments/' . $correlationId
                     )
                 );
+
+                $parsedOffset = 0;
 
                 do {
                     $fallbackClient->recv($fallbackBuffer, $fallbackBuffer->getLength());
@@ -350,7 +338,7 @@ Coroutine::run(static function () {
                     continue;
                 }
 
-                $paymentsCacheChannel->push($data['payload']);
+                $paymentsCacheChannel->push(['payload' => $data['payload'], 'target' => DEFAULT_SERVICE_NAME]);
             }
         });
     }
@@ -374,50 +362,54 @@ Coroutine::run(static function () {
 
             while (true) {
                 try {
-                    $payload = $paymentsCacheChannel->pop();
+                    $data = $paymentsCacheChannel->pop();
 
-                    if ($payload === null) {
+                    if ($data === null) {
                         Coroutine::yield();
                         continue;
                     }
 
                     [$nowApi, $nowPersist] = isoNowMs();
-                    $payloadApi = substr($payload, 1, -1) . ',"requestedAt":"' . $nowApi . '"}';
+                    $payloadApi = substr($data['payload'], 1, -1) . ',"requestedAt":"' . $nowApi . '"}';
                     $amount = extractAmount($payloadApi);
 
-                    $defaultClient->send(
-                        request(
-                            PAYMENT_PROCESSOR_URL_DEFAULT,
-                            '/payments',
-                            $payloadApi
-                        )
-                    );
+                    if ($data['target'] == DEFAULT_SERVICE_NAME) {
 
-                    $parsedOffset = 0;
+                        $defaultClient->send(
+                            request(
+                                PAYMENT_PROCESSOR_URL_DEFAULT,
+                                '/payments',
+                                $payloadApi
+                            )
+                        );
 
-                    do {
-                        $defaultClient->recv($defaultBuffer, $defaultBuffer->getLength());
-                        $parsedOffset += $defaultParser->execute($defaultBuffer, $parsedOffset);
+                        $parsedOffset = 0;
 
-                        if ($defaultParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
-                            $defaultBuffer->truncateFrom($parsedOffset);
-                            $parsedOffset = 0;
+                        do {
+                            $defaultClient->recv($defaultBuffer, $defaultBuffer->getLength());
+                            $parsedOffset += $defaultParser->execute($defaultBuffer, $parsedOffset);
+
+                            if ($defaultParser->getEvent() === Parser::EVENT_CHUNK_COMPLETE) {
+                                $defaultBuffer->truncateFrom($parsedOffset);
+                                $parsedOffset = 0;
+                                continue;
+                            }
+
+                            if ($defaultParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
+                                $defaultBuffer->truncateFrom($parsedOffset);
+                                break;
+                            }
+                        } while (true);
+
+                        if ($defaultParser->getStatusCode() == 200) {
+                            $successfullyInsertedPayments->push(['service' => DEFAULT_SERVICE_NAME, 'timestamp' => $nowPersist, 'amount' => $amount]);
                             continue;
                         }
 
-                        if ($defaultParser->getEvent() === Parser::EVENT_MESSAGE_COMPLETE) {
-                            $defaultBuffer->truncateFrom($parsedOffset);
-                            break;
-                        }
-                    } while (true);
+                        $errorChannel->push(['payload' => $data['payload'], 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist, 'lastTarget' => DEFAULT_SERVICE_NAME]);
 
-                    if ($defaultParser->getStatusCode() == 200) {
-                        $successfullyInsertedPayments->push(['service' => DEFAULT_SERVICE_NAME, 'timestamp' => $nowPersist, 'amount' => $amount]);
                         continue;
                     }
-
-                    [$nowApi, $nowPersist] = isoNowMs();
-                    $payloadApi = substr($payload, 1, -1) . ',"requestedAt":"' . $nowApi . '"}';
 
                     $fallbackClient->send(
                         request(
@@ -450,11 +442,9 @@ Coroutine::run(static function () {
                         continue;
                     }
 
-                    $errorChannel->push(['payload' => $payload, 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist]);
-                } catch (Swow\Http\ParserException $e) {
-                    $errorChannel->push(['payload' => $payload, 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist]);
-                } catch (Throwable $t) {
-                    $errorChannel->push(['payload' => $payload, 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist]);
+                    $errorChannel->push(['payload' => $data['payload'], 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist, 'lastTarget' => FALLBACK_SERVICE_NAME]);
+                } catch (Throwable) {
+                    $errorChannel->push(['payload' => $data['payload'], 'payloadApi' => $payloadApi, 'requestedAt' => $nowPersist, 'lastTarget' => $data['target']]);
                 }
             }
         });

@@ -9,7 +9,7 @@ api:
 	docker exec -it -d lvsantos1-rinha-api1 sh -c 'kill $$(pidof php); php api.php' && \
 	docker exec -it -d lvsantos1-rinha-api2 sh -c 'kill $$(pidof php); php api.php' && \
 	docker exec -it -d lvsantos1-rinha-api3 sh -c 'kill $$(pidof php); php api.php' && \
-	docker exec -it -d lvsantos1-rinha-workers sh -c 'kill $$(pidof php); php workers2.php' $$ \
+	docker exec -it -d lvsantos1-rinha-workers sh -c 'kill $$(pidof php); php workers.php' $$ \
 	sleep 1 && \
 	docker exec -it lvsantos1-rinha-api1 sh -c "chmod 0666 /http/*.sock"
 restart:

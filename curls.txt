@@ -12,6 +12,12 @@ curl -X POST -i 0.0.0.0:9999/payments -H "Content-Type: application/json" -d '{
     "requestedAt": "2025-08-01T23:40:58.769Z"
 }'
 
+curl -X POST -i http://localhost:8001/payments -H "Content-Type: application/json" -d '{
+    "correlationId": "2304a691-edbc-4227-bf06-3fcdc576cf02",
+    "amount": 19.99,
+    "requestedAt": "2025-08-01T23:40:58.769Z"
+}'
+
 curl -X POST -i 0.0.0.0:9999/payments -H "Content-Type: application/json" -d '{
     "correlationId": "2304a691-edbc-4227-bf06-3fcdc576cf02",
     "amount": 19.99

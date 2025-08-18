@@ -23,16 +23,57 @@ WORKDIR /build/php-src
 RUN ./buildconf --force && \
     ./configure \
         --prefix=/usr/local/php-opt \
-        --enable-cli \
+        # XML
+        --disable-libxml \
+        --disable-dom \
+        --disable-simplexml \
+        --disable-xml \
+        --disable-xmlreader \
+        --disable-xmlwriter \
+        # soap, html, xstl
+        --disable-soap \
+        --disable-xsl \
+        --disable-wddx \
+        # dbs
+        --without-pdo-sqlite \
+        --without-sqlite3 \
+        --without-mysqli \
+        --without-pdo-mysql \
+        --without-pdo-pgsql \
+        --without-pgsql \
+        --without-odbc \
+        --without-pdo-odbc \
+        --without-pdo-firebird \
+        # variados (ipc, standalone, etc)
+        --disable-phar \
+        --disable-posix \
+        --disable-shmop \
+        --disable-sysvmsg \
+        --disable-sysvsem \
+        --disable-sysvshm \
+        --disable-ctype \
+        --disable-tokenizer \
+        --disable-filter \
+        --disable-intl \
+        --disable-exif \
+        --disable-gettext \
         --disable-cgi \
+        # compressão
+        --disable-zip \
+        --without-bz2 \
+        --without-xpm \
+        # debug
+        --disable-debug \
+        --disable-cli-debug \
+        --disable-phpdbg \
+        # mantém o básico
+        --enable-cli \
         --with-openssl \
         --with-zlib \
         --with-curl \
         --enable-bcmath \
-        --enable-opcache \
-        --enable-pcntl \
         --enable-shmop \
-        --enable-mbstring && \
+        --enable-opcache && \
     make -j$(nproc) && \
     make install
 

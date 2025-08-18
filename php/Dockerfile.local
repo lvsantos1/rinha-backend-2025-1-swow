@@ -73,6 +73,7 @@ RUN ./buildconf --force && \
         --with-zlib \
         --with-curl \
         --enable-bcmath \
+        --enable-shmop \
         --enable-opcache && \
     make -j$(nproc) && \
     make install

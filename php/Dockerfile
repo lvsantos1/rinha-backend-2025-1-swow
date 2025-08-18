@@ -31,6 +31,7 @@ RUN ./buildconf --force && \
         --enable-bcmath \
         --enable-opcache \
         --enable-pcntl \
+        --enable-shmop \
         --enable-mbstring && \
     make -j$(nproc) && \
     make install

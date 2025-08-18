@@ -13,6 +13,44 @@ use Swow\Buffer;
 const DEFAULT_SERVICE_NAME = 'default';
 const FALLBACK_SERVICE_NAME = 'fallback';
 
+function getSharedMemory(string $mode = 'c'): Shmop
+{
+    static $handlers = [];
+
+    if (!isset($handlers[$mode])) {
+        $handlers[$mode] = shmop_open(
+            SHMOP_KEY,
+            $mode,
+            0644,
+            20 // tamanho fixo em bytes
+        );
+
+        if ($handlers[$mode] === false) {
+            throw new RuntimeException("Falha ao abrir memória compartilhada (modo: $mode)");
+        }
+    }
+
+    return $handlers[$mode];
+}
+
+function updateThreshold(float|int $amount): void
+{
+    $shmopHandler = getSharedMemory('c'); // cria se não existir
+    $thresholdAmount = $amount * THRESHOLD_FACTOR;
+
+    // escreve exatamente 20 bytes, preenchendo com \0
+    $data = str_pad((string) $thresholdAmount, 20, "\0");
+    shmop_write($shmopHandler, $data, 0);
+}
+
+function readThreshold(): float
+{
+    $shmopHandler = getSharedMemory('a'); // leitura somente
+    $data = shmop_read($shmopHandler, 0, 20);
+
+    return (float) rtrim($data, "\0");
+}
+
 function parseQueryString(string $query): array
 {
     $params = [];
@@ -141,10 +179,16 @@ Coroutine::run(static function () {
         $successArray = [];
 
         while (true) {
+            $highest = 0;
             while ($successfullyInsertedPayments->getLength() > 0) {
                 $item = $successfullyInsertedPayments->pop();
                 $successArray[] = $item;
+
+                if ($item['amount'] > $highest) {
+                    $highest = $item['amount'];
+                }
             }
+            updateThreshold($highest);
 
             if ($paymentsSummaryTasksChannel->getLength() > 0) {
                 usleep(1000);
@@ -289,16 +333,23 @@ Coroutine::run(static function () {
                         }
                     } while (true);
 
+                    $amount = extractAmount($data['payloadApi']);
+
                     if ($defaultParser->getStatusCode() == 200) {
                         $successfullyInsertedPayments->push([
                             'service' => DEFAULT_SERVICE_NAME,
                             'timestamp' => $data['requestedAt'],
-                            'amount' => extractAmount($data['payloadApi'])
+                            'amount' => $amount
                         ]);
                         continue;
                     }
 
-                    $paymentsCacheChannel->push(['payload' => $data['payload'], 'target' => FALLBACK_SERVICE_NAME]);
+                    $target = FALLBACK_SERVICE_NAME;
+                    if($amount >= readThreshold()) {
+                        $target = DEFAULT_SERVICE_NAME;
+                    }
+
+                    $paymentsCacheChannel->push(['payload' => $data['payload'], 'target' => $target]);
                     continue;
                 }
 

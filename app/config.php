@@ -13,6 +13,7 @@ define('API_HTTP_BACKLOG', 1024);
 define('HTTP_PARSER_BUFFER_SIZE', Buffer::COMMON_SIZE * 2 * 2);
 
 // IPC
+define('SHMOP_KEY', 0x1234);
 define('WORKERS_IPC_SOCKET_PATTERN', '/ipc/workers_%s.sock');
 define('WORKERS_IPC_SOCKET', sprintf(WORKERS_IPC_SOCKET_PATTERN, getenv("INTERNAL_ID")));
 define('API_IPC_SOCKET', sprintf('/ipc/api_%s.sock', getenv("INTERNAL_ID")));
@@ -26,3 +27,4 @@ define('ERRORS_WORKERS_NUM', 25);
 define('WORKERS_PAYMENTS_CACHE_CAPACITY', 5000);
 define('WORKERS_PAYMENTS_CACHE_CAPACITY_ERRORS', 6000);
 define('SUCCESSFULLY_INSERTED_PAYMENTS', 20000);
+define('THRESHOLD_FACTOR', 0.5);

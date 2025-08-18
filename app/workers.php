@@ -178,14 +178,23 @@ Coroutine::run(static function () {
     Coroutine::run(static function () use ($paymentsSummaryTasksChannel, $successfullyInsertedPayments) {
         $successArray = [];
 
+        $highest = 0;
+        $thresholdUpdateCounter = 0;
+
         while (true) {
-            $highest = 0;
             while ($successfullyInsertedPayments->getLength() > 0) {
                 $item = $successfullyInsertedPayments->pop();
                 $successArray[] = $item;
 
                 if ($item['amount'] > $highest) {
                     $highest = $item['amount'];
+                }
+
+                $thresholdUpdateCounter++;
+
+                if($thresholdUpdateCounter >= 50) {
+                    updateThreshold($highest);
+                    $thresholdUpdateCounter = 0;
                 }
             }
             updateThreshold($highest);
